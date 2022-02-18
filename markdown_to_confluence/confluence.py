@@ -1,7 +1,8 @@
 import logging
-import json
 import requests
 import os
+import pickle
+import sys
 
 from urllib.parse import urljoin
 
@@ -28,6 +29,7 @@ class Confluence():
                  api_url=None,
                  username=None,
                  password=None,
+                 cookie=None,
                  headers=None,
                  dry_run=False,
                  _client=None):
@@ -54,7 +56,15 @@ class Confluence():
             _client = requests.Session()
 
         self._session = _client
+        if cookie:
+            log.info(f'Using existing cookie from {cookie}')
+            with open(cookie, 'rb') as f:
+                self._session.cookies.update(pickle.load(f))
+        else:
+            log.info('No cookie provided.  User username and password')
+            self._session.auth = (self.username, self.password)
         self._session.auth = (self.username, self.password)
+
         for header in headers or []:
             try:
                 name, value = header.split(':', 1)
@@ -172,6 +182,20 @@ class Confluence():
         if not response.get('size'):
             return None
         return response['results'][0]
+
+    def ping(self):
+        """
+            Basic request to get a cookie
+        """
+        response = self.get(path=f'content', params={ 'type': 'page', 'limit': 1 })
+        return response.get('size')
+
+    def save_cookie(self, dest):
+        if self.ping():
+            with open(dest, 'wb') as f:
+                pickle.dump(self._session.cookies, f)
+            return True
+        return False
 
     def create_labels(self, page_id=None, slug=None, tags=[]):
         """Creates labels for the page to both assist with searching as well
