@@ -2,13 +2,14 @@
 import argparse
 import logging
 import os
-import requests
 import git
 import sys
 
-from confluence import Confluence
-from convert import convtoconf, parse
-"""Deploys Markdown posts to Confluenceo
+from getpass import getpass
+from markdown_to_confluence.confluence import Confluence
+from markdown_to_confluence.convert import convtoconf, parse
+
+"""Synchronizes pages rendered in Markdown to Confluence
 
 This script is meant to be executed as either part of a CI/CD job or on an
 adhoc basis.
@@ -17,6 +18,11 @@ adhoc basis.
 logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
 log = logging.getLogger(__name__)
 
+# Global vars to store failed and skipped pages
+failedpages = []
+skippedpages = []
+
+# Potential for future supported formats
 SUPPORTED_FORMATS = ['.md']
 
 
@@ -67,29 +73,31 @@ def get_slug(filepath, prefix=''):
         slug = '{}_{}'.format(prefix, slug)
     return slug
 
-
 def parse_args():
+    # Parse command line arguments
+    
     parser = argparse.ArgumentParser(
-        description='Converts and deploys a markdown post to Confluence')
-    parser.add_argument(
-        '--git',
-        dest='git',
-        default=os.getcwd(),
-        help='The path to your Git repository (default: {}))'.format(
-            os.getcwd()))
+        description='Converts and deploys a single or directory of markdown page/s to Confluence')
     parser.add_argument(
         '--api_url',
         dest='api_url',
         default=os.getenv('CONFLUENCE_API_URL'),
         help=
-        'The URL to the Confluence API (e.g. https://wiki.example.com/rest/api/)'
+        'REQUIRED: The URL to the Confluence API (e.g. https://wiki.example.com/rest/api/)'
+    )
+    parser.add_argument(
+        '--space',
+        dest='space',
+        default=os.getenv('CONFLUENCE_SPACE'),
+        help=
+        'REQUIRED: The Confluence space where the page/s should reside (default: env(\'CONFLUENCE_SPACE\'))'
     )
     parser.add_argument(
         '--username',
         dest='username',
         default=os.getenv('CONFLUENCE_USERNAME'),
         help=
-        'The username for authentication to Confluence (default: env(\'CONFLUENCE_USERNAME\'))'
+        'REQUIRED: The username for authentication to Confluence (default: env(\'CONFLUENCE_USERNAME\'))'
     )
     parser.add_argument(
         '--password',
@@ -99,25 +107,23 @@ def parse_args():
         'The password for authentication to Confluence (default: env(\'CONFLUENCE_PASSWORD\'))'
     )
     parser.add_argument(
-        '--space',
-        dest='space',
-        default=os.getenv('CONFLUENCE_SPACE'),
-        help=
-        'The Confluence space where the post should reside (default: env(\'CONFLUENCE_SPACE\'))'
+        '--dir',
+        dest='dir',
+        default='None',
+        help='The path to your directory containing markdown pages (default: None)'
     )
     parser.add_argument(
-        '--ancestor_id',
-        dest='ancestor_id',
-        default=os.getenv('CONFLUENCE_ANCESTOR_ID'),
-        help=
-        'The Confluence ID of the parent page to place posts under (default: env(\'CONFLUENCE_ANCESTOR_ID\'))'
+        '--git',
+        dest='git',
+        default='None',
+        help='The path to your Git repository containing markdown pages (default: None)'
     )
     parser.add_argument(
         '--global_label',
         dest='global_label',
         default=os.getenv('CONFLUENCE_GLOBAL_LABEL'),
         help=
-        'The label to apply to every post for easier discovery in Confluence (default: env(\'CONFLUENCE_GLOBAL_LABEL\'))'
+        'The label to apply to every page for easier discovery in Confluence (default: env(\'CONFLUENCE_GLOBAL_LABEL\'))'
     )
     parser.add_argument(
         '--header',
@@ -133,109 +139,180 @@ def parse_args():
         dest='dry_run',
         action='store_true',
         help=
-        'Print requests that would be sent- don\'t actually make requests against Confluence (note: we return empty responses, so this might impact accuracy)'
+        'Print requests that would be sent - don\'t actually make requests against Confluence (note: we return empty responses, so this might impact accuracy)'
+    )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Can be used with --git flag. Upload pages without checking for changes'
+    )
+    parser.add_argument(
+        '--save-cookie',
+        dest='save_cookie',
+        default=None,
+        help='File system location to write cookie'
+    )
+    parser.add_argument(
+        '--cookie-file',
+        dest='cookie',
+        default=None,
+        help='Instead of using a user name and password use a cookie created with --save-cookie'
     )
     parser.add_argument(
         'posts',
         type=str,
         nargs='*',
         help=
-        'Individual files to deploy to Confluence (takes precendence over --git)'
+        'Individual pages to deploy to Confluence'
     )
-
+    
     args = parser.parse_args()
 
     if not args.api_url:
-        log.error('Please provide a valid API URL')
+        log.error('Please provide a valid Confluence API_URL')
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+    if not args.space:
+        log.error('Please provide a valid Confluence Space')
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+    if not (args.username or args.cookie):
+        log.error('Please provide a valid user or cookie file')
+        parser.print_help(sys.stderr)
+        sys.exit(1)
+    if len(sys.argv)==1:
+        parser.print_help(sys.stderr)
         sys.exit(1)
 
     return parser.parse_args()
 
+class Page():
+    def __init__(self, post_path, args, confluence):
+        self.post_path = post_path
+        self.ignore = True
 
-def deploy_file(post_path, args, confluence):
-    """Creates or updates a file in Confluence
-    
-    Arguments:
-        post_path {str} -- The absolute path of the post to deploy to Confluence
-        args {argparse.Arguments} -- The parsed command-line arguments
-        confluence {confluence.Confluence} -- The Confluence API client
-    """
+        _, ext = os.path.splitext(post_path)
+        if ext not in SUPPORTED_FORMATS:
+            log.info('Skipping {} since it\'s not a supported format.'.format(
+                post_path))
+            return
 
-    _, ext = os.path.splitext(post_path)
-    if ext not in SUPPORTED_FORMATS:
-        log.info('Skipping {} since it\'s not a supported format.'.format(
-            post_path))
-        return
+        try:
+            self.front_matter, markdown = parse(post_path)
+        except Exception as e:
+            log.error(
+                'Unable to process {}. Normally not a problem, but here\'s the error we received: {}'
+                .format(post_path, e))
+            return
 
-    try:
-        front_matter, markdown = parse(post_path)
-    except Exception as e:
-        log.error(
-            'Unable to process {}. Normally not a problem, but here\'s the error we received: {}'
-            .format(post_path, e))
-        return
+        
+        if 'wiki' not in self.front_matter or not self.front_matter['wiki'].get('share'):
+            log.info(
+                'Page {} not set to be uploaded to Confluence'.format(post_path))
+            return
+        
+        if self.front_matter.get('draft'):
+            log.info(
+                'Page {} has draft status set to true....ignoring'.format(post_path))
+            return
 
-    if 'wiki' not in front_matter or not front_matter['wiki'].get('share'):
-        log.info(
-            'Post {} not set to be uploaded to Confluence'.format(post_path))
-        return
+        if self.front_matter['wiki'].get('title'):
+            deploy_title=self.front_matter['wiki'].get('title')
+            self.front_matter['title']=deploy_title
 
-    front_matter['author_keys'] = []
-    authors = front_matter.get('authors', [])
-    for author in authors:
-        confluence_author = confluence.get_author(author)
-        if not confluence_author:
-            continue
-        front_matter['author_keys'].append(confluence_author['userKey'])
+        if self.front_matter['wiki'].get('parent'):
+            deploy_parent=self.front_matter['wiki'].get('parent')
+            self.front_matter['parent']=deploy_parent
 
-    # Normalize the content into whatever format Confluence expects
-    html, attachments = convtoconf(markdown, front_matter=front_matter)
+        self.front_matter['author_keys'] = []
+        authors = self.front_matter.get('authors', [])
+        for author in authors:
+            confluence_author = confluence.get_author(author)
+            if not confluence_author:
+                continue
+            self.front_matter['author_keys'].append(confluence_author['userKey'])
 
-    static_path = os.path.join(args.git, 'static')
-    for i, attachment in enumerate(attachments):
-        attachments[i] = os.path.join(static_path, attachment.lstrip('/'))
+        ext = post_path.split('.')[-1]
 
-    slug_prefix = '_'.join(author.lower() for author in authors)
-    post_slug = get_slug(post_path, prefix=slug_prefix)
+     
+        # Normalize the content into whatever format Confluence expects
+        self.html, self.attachments = convtoconf(markdown, front_matter=self.front_matter)
 
-    ancestor_id = front_matter['wiki'].get('ancestor_id', args.ancestor_id)
-    space = front_matter['wiki'].get('space', args.space)
+        static_path = os.path.join(args.dir, 'static')
+        for i, attachment in enumerate(self.attachments):
+            self.attachments[i] = os.path.join(static_path, attachment.lstrip('/'))
 
-    tags = front_matter.get('tags', [])
-    if args.global_label:
-        tags.append(args.global_label)
+        self.post_slug = get_slug(post_path)
 
-    page = confluence.exists(slug=post_slug,
-                             ancestor_id=ancestor_id,
-                             space=space)
-    if page:
-        confluence.update(page['id'],
-                          content=html,
-                          title=front_matter['title'],
-                          tags=tags,
-                          slug=post_slug,
-                          space=space,
-                          ancestor_id=ancestor_id,
-                          page=page,
-                          attachments=attachments)
-    else:
-        confluence.create(content=html,
-                          title=front_matter['title'],
-                          tags=tags,
-                          slug=post_slug,
-                          space=space,
-                          ancestor_id=ancestor_id,
-                          attachments=attachments)
+        self.space = self.front_matter.get('space', args.space)
 
+        self.tags = self.front_matter.get('tags', [])
+        if args.global_label:
+            self.tags.append(args.global_label)
+        self.ignore = False
+        self.children = []
+
+    def deploy(self, args, confluence, parent_id):        
+        if 'parent' in self.front_matter and not parent_id:
+            parent_title = self.front_matter['parent']
+            parent = confluence.exists(title=parent_title, space=self.space)
+            if not parent:
+                log.error(f'Cannot find parent page "{parent_title}". Skipping {self.post_path}.')
+                self.id = None
+                return
+            parent_id = parent['id']
+        
+        page = confluence.exists(title=self.front_matter['title'], ancestor_id=parent_id, space=self.space)
+        result=""
+        if page:
+            self.id = page['id']
+            # FIXME: confluence sometimes changes the file so unchanged file will not match
+            if not args.force and confluence.get_page_content(page['id']) == self.html.strip():
+                log.info(f'Skipping {self.post_path} since there are no changes')
+            else:
+                result = confluence.update(page['id'],
+                                content=self.html,
+                                title=self.front_matter['title'],
+                                tags=self.tags,
+                                slug=self.post_slug,
+                                space=self.space,
+                                ancestor_id=parent_id,
+                                page=page,
+                                attachments=self.attachments)
+                if result.endswith("fail"):
+                    failedpages.append(self.post_path)
+        else:
+                result = self.id = confluence.create(content=self.html,
+                            title=self.front_matter['title'],
+                            tags=self.tags,
+                            slug=self.post_slug,
+                            space=self.space,
+                            ancestor_id=parent_id,
+                            attachments=self.attachments)
+                if result.endswith("fail"):
+                    failedpages.append(self.post_path)
+        
 
 def main():
     args = parse_args()
 
+    if args.password is None and args.cookie is None:
+        args.password = getpass()
+
     confluence = Confluence(api_url=args.api_url,
                             username=args.username,
                             password=args.password,
+                            cookie=args.cookie,
                             headers=args.headers,
                             dry_run=args.dry_run)
+
+    if args.save_cookie:
+        log.info('Attempting to save cookie.  Input files will be ignored')
+        if confluence.save_cookie(args.save_cookie):
+            log.info(f'Cookie saved successfully to {args.save_cookie}')
+        else:
+            log.error(f'Failed to save cookie {args.save_cookie}')
+        return
 
     if args.posts:
         changed_posts = [os.path.abspath(post) for post in args.posts]
@@ -243,19 +320,70 @@ def main():
             if not os.path.exists(post_path) or not os.path.isfile(post_path):
                 log.error('File doesn\'t exist: {}'.format(post_path))
                 sys.exit(1)
+ 
+    elif args.git != 'None':
+          repo = git.Repo(args.git)
+          log.info('Checking content pages modified in the last Git commit')
+          changed_posts = [
+              os.path.join(args.git, post) for post in get_last_modified(repo)
+          ]
+          if not changed_posts:
+            log.info('No pages created/modified in the latest Git commit')
+            return
+
+    elif args.dir != 'None':
+          log.info(f'Checking content pages in directory {args.dir}')
+          changed_posts = [
+              os.path.join(path, name) for path, subdirs, files in os.walk(args.dir) for name in files
+          ]
+          for filepath in changed_posts[:]:
+            if not filepath.startswith(f'{args.dir}/content/'):
+                changed_posts.remove(f'{filepath}')
+
     else:
-        repo = git.Repo(args.git)
-        changed_posts = [
-            os.path.join(args.git, post) for post in get_last_modified(repo)
-        ]
-    if not changed_posts:
-        log.info('No post created/modified in the latest commit')
+        log.info('No pages found in input source')
         return
 
-    for post in changed_posts:
-        log.info('Attempting to deploy {}'.format(post))
-        deploy_file(post, args, confluence)
+    pages = [ p for p in (Page(post, args, confluence) for post in changed_posts) if not p.ignore ]
 
+    page_map = dict((p.front_matter['title'], p) for p in pages)
+
+    seen = set()
+    root_pages = []
+
+    for p in pages:
+        parent = p.front_matter['wiki'].get('parent', None)
+        if parent and parent in page_map:
+            page_map[parent].children.append(p)
+        else:
+            root_pages.append(p)
+    
+    def deploy_pages(pages, offset = 0, parent_id = None):
+        for p in pages:
+            if p.front_matter['title'] not in seen:
+                seen.add(p.front_matter['title'])
+                log.info('-' * offset + '> Attempting to deploy ' + p.front_matter['title'])
+                p.deploy(args, confluence, parent_id)
+                deploy_pages(p.children, offset + 4, p.id)
+            else:
+                log.info('ERROR ---- ' + 'Duplicate Confluence page ' + '"' + p.front_matter['title'] +'"' + ' already exists. Skipping.....')
+                skippedpages.append('"' + p.front_matter['title'] + '"' + ' at ' + p.post_path)
+
+    deploy_pages(root_pages)
+
+    if len(failedpages) > 0:
+        log.info('---------- Failure Summary -----------')
+        log.info(f'{len(failedpages)} pages failed to deploy. Please check the pages listed below for invalid content:\n')
+        for f in failedpages:
+            log.info(f)
+        log.info('--------------------------------------')
+            
+    if len(skippedpages) > 0:
+        log.info('---------- Skipped Summary -----------')
+        log.info(f'{len(skippedpages)} pages were skipped due to duplicate page titles. Please check the pages listed below for duplicate titles:\n')
+        for s in skippedpages:
+            log.info(s)
+        log.info('--------------------------------------')
 
 if __name__ == '__main__':
     main()

@@ -1,7 +1,8 @@
 import logging
-import json
 import requests
 import os
+import pickle
+import sys
 
 from urllib.parse import urljoin
 
@@ -28,6 +29,7 @@ class Confluence():
                  api_url=None,
                  username=None,
                  password=None,
+                 cookie=None,
                  headers=None,
                  dry_run=False,
                  _client=None):
@@ -54,7 +56,14 @@ class Confluence():
             _client = requests.Session()
 
         self._session = _client
-        self._session.auth = (self.username, self.password)
+        if cookie:
+            log.info(f'Using existing cookie from {cookie}')
+            with open(cookie, 'rb') as f:
+                self._session.cookies.update(pickle.load(f))
+        else:
+            log.info('No cookie provided.  User username and password')
+            self._session.auth = (self.username, self.password)
+        
         for header in headers or []:
             try:
                 name, value = header.split(':', 1)
@@ -124,7 +133,9 @@ class Confluence():
                                      params=params,
                                      data=data,
                                      files=files))
-            print(response.content)
+            if response.status_code == 403 or response.status_code == 401:
+                log.info('Authorization failed. Please check your credentials.')
+                sys.exit(1)
             return response.content
 
         # Will probably want to be more robust here, but this should work for now
@@ -143,7 +154,7 @@ class Confluence():
     def put(self, path=None, params=None, data=None):
         return self._request(method='PUT', path=path, params=params, data=data)
 
-    def exists(self, space=None, slug=None, ancestor_id=None):
+    def exists(self, space=None, title=None, ancestor_id=None):
         """Returns the Confluence page that matches the provided metdata, if it exists.
 
         Specifically, this leverages a Confluence Query Language (CQL) query
@@ -155,11 +166,11 @@ class Confluence():
             slug {str} -- The page slug
             ancestor_id {str} -- The ID of the parent page
         """
-        self._require_kwargs({'slug': slug})
+        self._require_kwargs({'title': title})
 
         cql_args = []
-        if slug:
-            cql_args.append('label={}'.format(slug))
+        if title:
+            cql_args.append(f'title="{title}"')
         if ancestor_id:
             cql_args.append('ancestor={}'.format(ancestor_id))
         if space:
@@ -171,9 +182,34 @@ class Confluence():
         response = self.get(path='content/search', params=params)
         if not response.get('size'):
             return None
-        return response['results'][0]
+        ret = [ r for r in response['results'] if r['type'] == 'page' and r['title'] == title ]
+        assert(len(ret) == 1)
+        return ret[0]
+        
+    def ping(self):
+        """
+            Basic request to get a cookie
+        """
+        response = self.get(path=f'content', params={ 'type': 'page', 'limit': 1 })
+        return response.get('size')
 
-    def create_labels(self, page_id=None, slug=None, tags=[]):
+    def save_cookie(self, dest):
+        if self.ping():
+            with open(dest, 'wb') as f:
+                pickle.dump(self._session.cookies, f)
+            return True
+        return False
+    
+    def get_page_content(self, id):
+        """Returns the content of the Confluence page that matches the provided metdata, if it exists.
+
+        Arguments:
+            id {str} -- The ID of the page
+        """
+        response = self.get(path=f'content/{id}', params={ 'expand': 'body.storage' })
+        return response.get('body')['storage']['value']
+
+    def create_labels(self, page_id=None, tags=[]):
         """Creates labels for the page to both assist with searching as well
         as categorization.
 
@@ -185,7 +221,8 @@ class Confluence():
             slug {str} -- The page slug to use as the label value
             tags {list(str)} -- Any other tags to apply to the post
         """
-        labels = [{'prefix': DEFAULT_LABEL_PREFIX, 'name': slug}]
+        
+        labels = []
 
         if tags is None:
             tags = []
@@ -200,19 +237,13 @@ class Confluence():
         if not labels:
             log.error(
                 'No labels found after attempting to update page {}'.format(
-                    slug))
+                    page_id))
             log.error('Here\'s the response we got:\n{}'.format(response))
             return labels
 
-        if not any(label['name'] == slug for label in labels):
-            log.error(
-                'Returned labels missing the expected slug: {}'.format(slug))
-            log.error('Here are the labels we got: {}'.format(labels))
-            return labels
-
         log.info(
-            'Created the following labels for page {slug}: {labels}'.format(
-                slug=slug,
+            'Created the following labels for page {page_id}: {labels}'.format(
+                page_id=page_id,
                 labels=', '.join(label['name'] for label in labels)))
         return labels
 
@@ -223,7 +254,7 @@ class Confluence():
                              attachments=None,
                              space=None,
                              type='page'):
-        return {
+        ret = {
             'type': type,
             'title': title,
             'space': {
@@ -234,11 +265,13 @@ class Confluence():
                     'representation': 'storage',
                     'value': content
                 }
-            },
-            'ancestors': [{
+            }
+        }
+        if ancestor_id:
+            ret['ancestors'] = [{
                 'id': str(ancestor_id)
             }]
-        }
+        return ret
 
     def get_attachments(self, post_id):
         """Gets the attachments for a particular Confluence post
@@ -263,9 +296,10 @@ class Confluence():
         log.info(
             'Uploading attachment {attachment_path} to post {post_id}'.format(
                 attachment_path=attachment_path, post_id=post_id))
-        self.post(path=path,
-                  params={'allowDuplicated': 'true'},
-                  files={'file': open(attachment_path, 'rb')})
+        if not self.dry_run:
+            self.post(path=path,
+                    params={'allowDuplicated': 'true'},
+                    files={'file': open(attachment_path, 'rb')})
         log.info('Uploaded {} to post ID {}'.format(attachment_path, post_id))
 
     def get_author(self, username):
@@ -313,7 +347,7 @@ class Confluence():
             'space': space
         })
 
-        page = self._create_page_payload(content='Upload in progress...',
+        page = self._create_page_payload(content='Created by markdown-to-confluence - <a href="https://github.com/vmware-tanzu-labs/markdown-to-confluence">https://github.com/vmware-tanzu-labs/markdown-to-confluence</a>',
                                          title=title,
                                          ancestor_id=ancestor_id,
                                          space=space,
@@ -396,12 +430,36 @@ class Confluence():
         # we can upload the final content up to Confluence.
         path = 'content/{}'.format(page['id'])
         response = self.put(path=path, data=new_page)
-        print(response)
+        failure = False
 
-        page_url = urljoin(self.api_url, response['_links']['webui'])
+        # Dry-run option doesn't create any pages hence no urls,
+        # we set it to a fixed value
+       
+        if self.dry_run:
+            page_url = '(dry run)'
+        
+        # Test if there was a page creation error, if so set
+        # failure var to True
 
-        # Finally, we can update the labels on the page
-        self.create_labels(page_id=post_id, slug=slug, tags=tags)
+        else: 
+            try:
+                test = response['_links']['webui']
+            except(TypeError):
+                failure = True
+            else:
+                page_url = urljoin(self.api_url, response['_links']['webui'])
 
-        log.info('Page "{title}" (id {page_id}) updated successfully at {url}'.
-                 format(title=title, page_id=post_id, url=page_url))
+        # Check for page creation failure and pass it back in the post_id var for tracking
+        
+        if failure:
+            log.error('ERROR ---- Page "{title}" (id {page_id}) failed to update'.format(title=title, page_id=post_id))
+            post_id = post_id + " - fail"
+        else:
+            if tags:
+                # Finally, we can update the labels on the page
+                self.create_labels(page_id=post_id, tags=tags)
+
+            log.info('Page "{title}" (id {page_id}) updated successfully at {url}'.
+            format(title=title, page_id=post_id, url=page_url))
+
+        return post_id

@@ -56,19 +56,19 @@ class ConfluenceRenderer(mistune.Renderer):
 
     def layout(self, content):
         """Renders the final layout of the content. This includes a two-column
-        layout, with the authors and ToC on the left, and the content on the
+        layout, with the ToC on the left, spacer column in the middle and the content on the
         right.
 
         The layout looks like this:
 
-        ------------------------------------------
-        |             |                          |
-        |             |                          |
-        | Sidebar     |         Content          |
-        | (30% width) |      (800px width)       |
-        |             |                          |
-        ------------------------------------------
-        
+        -------------------------------------------
+        |             |  |                        |
+        |             |  |                        |
+        | Sidebar     |  |       Content          |
+        | (25% width) |  |    (73% width)         |
+        |             |  |                        |
+        -------------------------------------------
+
         Arguments:
             content {str} -- The HTML of the content
         """
@@ -77,19 +77,30 @@ class ConfluenceRenderer(mistune.Renderer):
             <p><ac:structured-macro ac:name="toc" ac:schema-version="1">
                 <ac:parameter ac:name="exclude">^(Authors|Table of Contents)$</ac:parameter>
             </ac:structured-macro></p>''')
-        # Ignore the TOC if we haven't processed any headers to avoid making a
-        # blank one
+        
+        if self.has_toc:
+            spacer = ''
+            #authors = self.render_authors()
+            column = textwrap.dedent('''
+                <ac:structured-macro ac:name="column" ac:schema-version="1">
+                    <ac:parameter ac:name="width">{width}</ac:parameter>
+                    <ac:rich-text-body>{content}</ac:rich-text-body>
+                </ac:structured-macro>''')
+            sidebar = column.format(width='25%', content=toc)
+            spacer = column.format(width='2%', content=spacer)
+            main_content = column.format(width='73%', content=content)
+            return sidebar + spacer + main_content
+        
+        # Ignore the TOC if none in source for better formatting
         if not self.has_toc:
-            toc = ''
-        authors = self.render_authors()
-        column = textwrap.dedent('''
-            <ac:structured-macro ac:name="column" ac:schema-version="1">
-                <ac:parameter ac:name="width">{width}</ac:parameter>
-                <ac:rich-text-body>{content}</ac:rich-text-body>
-            </ac:structured-macro>''')
-        sidebar = column.format(width='30%', content=toc + authors)
-        main_content = column.format(width='800px', content=content)
-        return sidebar + main_content
+            #authors = self.render_authors()
+            column = textwrap.dedent('''
+                <ac:structured-macro ac:name="column" ac:schema-version="1">
+                    <ac:parameter ac:name="width">{width}</ac:parameter>
+                    <ac:rich-text-body>{content}</ac:rich-text-body>
+                </ac:structured-macro>''')
+            main_content = column.format(width='100%', content=content)
+            return main_content
 
     def header(self, text, level, raw=None):
         """Processes a Markdown header.
@@ -122,12 +133,21 @@ class ConfluenceRenderer(mistune.Renderer):
         return '<h1>Authors</h1><p>{}</p>'.format(author_content)
 
     def block_code(self, code, lang):
-        return textwrap.dedent('''\
-            <ac:structured-macro ac:name="code" ac:schema-version="1">
-                <ac:parameter ac:name="language">{l}</ac:parameter>
-                <ac:plain-text-body><![CDATA[{c}]]></ac:plain-text-body>
-            </ac:structured-macro>
-        ''').format(c=code, l=lang or '')
+            """Formats a code block into a Confluence code block macro.
+
+            Confluence code block macro uses bash as language
+            rather than sh so this is explicity set.
+
+            """
+            if lang == "sh":
+                lang = "bash"
+            return textwrap.dedent('''\
+                <ac:structured-macro ac:name="code" ac:schema-version="1">
+                    <ac:parameter ac:name="language">{l}</ac:parameter>
+                    <ac:parameter ac:name="theme">Midnight</ac:parameter>
+                    <ac:plain-text-body><![CDATA[{c}]]></ac:plain-text-body>
+                </ac:structured-macro>
+            ''').format(c=code, l=lang or '')
 
     def image(self, src, title, alt_text):
         """Renders an image into XHTML expected by Confluence.
