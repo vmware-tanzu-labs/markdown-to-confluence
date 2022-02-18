@@ -110,7 +110,7 @@ A standard recommendation is to number the content as per its hierarchy to ensur
   1.3 How to use
 
 2. Product B
-  2.1 Intro/overview
+  2.1 Intro/Overview
   2.2 Pricelist
     2.2.1 License Info
   2.3 How to use
