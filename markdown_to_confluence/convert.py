@@ -133,12 +133,21 @@ class ConfluenceRenderer(mistune.Renderer):
         return '<h1>Authors</h1><p>{}</p>'.format(author_content)
 
     def block_code(self, code, lang):
-        return textwrap.dedent('''\
-            <ac:structured-macro ac:name="code" ac:schema-version="1">
-                <ac:parameter ac:name="language">{l}</ac:parameter>
-                <ac:plain-text-body><![CDATA[{c}]]></ac:plain-text-body>
-            </ac:structured-macro>
-        ''').format(c=code, l=lang or '')
+            """Formats a code block into a Confluence code block macro.
+
+            Confluence code block macro uses bash as language
+            rather than sh so this is explicity set.
+
+            """
+            if lang == "sh":
+                lang = "bash"
+            return textwrap.dedent('''\
+                <ac:structured-macro ac:name="code" ac:schema-version="1">
+                    <ac:parameter ac:name="language">{l}</ac:parameter>
+                    <ac:parameter ac:name="theme">Midnight</ac:parameter>
+                    <ac:plain-text-body><![CDATA[{c}]]></ac:plain-text-body>
+                </ac:structured-macro>
+            ''').format(c=code, l=lang or '')
 
     def image(self, src, title, alt_text):
         """Renders an image into XHTML expected by Confluence.
