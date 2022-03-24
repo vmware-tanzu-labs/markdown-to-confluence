@@ -4,6 +4,7 @@ import logging
 import os
 import git
 import sys
+import re
 
 from getpass import getpass
 from markdown_to_confluence.confluence import Confluence
@@ -247,6 +248,13 @@ class Page():
         self.space = self.front_matter.get('space', args.space)
 
         self.tags = self.front_matter.get('tags', [])
+        
+        # Confluence does not support spaces in labels. Replace these with dashes
+        for i in range(len(self.tags)):
+            altag = re.sub(r'[^A-Za-z0-9 -]+', '', self.tags[i])
+            ftag = altag.replace(" ","-")
+            self.tags[i] = ftag
+        
         if args.global_label:
             self.tags.append(args.global_label)
         self.ignore = False
