@@ -45,7 +45,7 @@ def convtoconf(markdown, front_matter={}):
     return page_html, renderer.attachments
 
 
-class ConfluenceRenderer(mistune.Renderer):
+class ConfluenceRenderer(mistune.HTMLRenderer):
     def __init__(self, authors=[]):
         self.attachments = []
         if authors is None:
@@ -132,7 +132,7 @@ class ConfluenceRenderer(mistune.Renderer):
             for user_key in self.authors)
         return '<h1>Authors</h1><p>{}</p>'.format(author_content)
 
-    def block_code(self, code, lang):
+    def block_code(self, code, lang="sh"):
             """Formats a code block into a Confluence code block macro.
 
             Confluence code block macro uses bash as language
