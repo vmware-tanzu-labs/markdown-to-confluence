@@ -27,7 +27,7 @@ docker build -t markdown-to-confluence:v1.0 .
 This container can then be executed by substituting the mount location of the content directory and executing:
 
 ```
-docker run -it -v ~/hugo-site:/site markdown-to-confluence:v1.0 --api_url "CONFLUENCE_URL" --space "CONFLUENCE_SPACE --user "CONFLUENCE_USER" --dir /site
+docker run -it -v ~/hugo-site:/site markdown-to-confluence:v1.0 --api_url "CONFLUENCE_URL" --space "CONFLUENCE_SPACE" --user "CONFLUENCE_USER" --dir /site
 ```
 
 # Usage
@@ -131,7 +131,7 @@ There are three ways to synchronize a page or set of pages to Confluence:
 You may wish to synchronize a single page on-demand, rather than building this process into your CI/CD pipeline. To do this, just put the filenames of the page/s you wish to deploy to Confluence as arguments:
 
 ```
-python3 markdown-to-confluence.py --api_url "CONFLUENCE_URL" --space "CONFLUENCE_SPACE --user "CONFLUENCE_USER" /path/to/your/post.md
+python3 markdown-to-confluence.py --api_url "CONFLUENCE_URL" --space "CONFLUENCE_SPACE" --user "CONFLUENCE_USER" /path/to/your/post.md
 ```
 
 ### Deploying a Directory of Pages On-Demand
@@ -139,7 +139,7 @@ python3 markdown-to-confluence.py --api_url "CONFLUENCE_URL" --space "CONFLUENCE
 To aid in synchronizing an entire Hugo site on-demand you can synchronize all pages contained within a directory. To do this, just provide the `--dir` flag with the path to the base content directory you wish to deploy to Confluence:
 
 ```
-python3 markdown-to-confluence.py --api_url "CONFLUENCE_URL" --space "CONFLUENCE_SPACE --user "CONFLUENCE_USER" --dir /site/content
+python3 markdown-to-confluence.py --api_url "CONFLUENCE_URL" --space "CONFLUENCE_SPACE" --user "CONFLUENCE_USER" --dir /site/content
 ```
 
 ### Syncing from a Git Repository
@@ -149,5 +149,5 @@ This project was originally created to keep an instance of Hugo in sync with a C
 To enable this as part of your CI/CD pipeline, run `markdown-to-confluence`, providing the `--git` flag:
 
 ```
-python3 markdown-to-confluence.py --api_url "CONFLUENCE_URL" --space "CONFLUENCE_SPACE --user "CONFLUENCE_USER" --git /path/to/your/repo
+python3 markdown-to-confluence.py --api_url "CONFLUENCE_URL" --space "CONFLUENCE_SPACE" --user "CONFLUENCE_USER" --git /path/to/your/repo
 ```
