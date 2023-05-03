@@ -1,5 +1,6 @@
 import logging
 import requests
+import hashlib
 import os
 import pickle
 import sys
@@ -33,6 +34,7 @@ class Confluence():
                  headers=None,
                  dry_run=False,
                  minoredit=True,
+                 optimizeattachments=True,
                  _client=None):
         """Creates a new Confluence API client.
         
@@ -54,6 +56,7 @@ class Confluence():
         self.password = password
         self.dry_run = dry_run
         self.minoredit = minoredit
+        self.optimizeattachments = optimizeattachments
 
         if _client is None:
             _client = requests.Session()
@@ -299,10 +302,23 @@ class Confluence():
         log.info(
             'Uploading attachment {attachment_path} to post {post_id}'.format(
                 attachment_path=attachment_path, post_id=post_id))
+        shahash = None
+        if self.optimizeattachments:
+            response = self.get(path="content/{}/child/attachment".format(post_id),
+                        params= {'filename': os.path.basename(attachment_path),
+                                'expand': 'version'})
+            shahash = hashlib.sha256(open(attachment_path, 'rb').read()).hexdigest()
+            try:
+                if len(response['results']) == 1 and \
+                shahash == response['results'][0]['version']['message']:
+                    log.info('Not Uploaded {} to post ID {} - no changes in file'.format(attachment_path, post_id))
+                    return
+            except KeyError:
+                pass
         if not self.dry_run:
             self.post(path=path,
                     params={'allowDuplicated': 'true'},
-                    files={'minorEdit': self.minoredit, 'file': open(attachment_path, 'rb')})
+                    files={'comment': shahash, 'minorEdit': self.minoredit, 'file': open(attachment_path, 'rb')})
         log.info('Uploaded {} to post ID {}'.format(attachment_path, post_id))
 
     def get_author(self, username):
