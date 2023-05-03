@@ -32,6 +32,7 @@ class Confluence():
                  cookie=None,
                  headers=None,
                  dry_run=False,
+                 minoredit=True,
                  _client=None):
         """Creates a new Confluence API client.
         
@@ -41,6 +42,7 @@ class Confluence():
             password {str} -- The Confluence service account password
             headers {list(str)} -- The HTTP headers which will be set for all requests
             dry_run {str} -- The Confluence service account password
+            minoredit {bool} -- Flag for minorEdit in Confluence
         """
         # A common gotcha will be given a URL that doesn't end with a /, so we
         # can account for this
@@ -51,6 +53,7 @@ class Confluence():
         self.username = username
         self.password = password
         self.dry_run = dry_run
+        self.minoredit = minoredit
 
         if _client is None:
             _client = requests.Session()
@@ -299,7 +302,7 @@ class Confluence():
         if not self.dry_run:
             self.post(path=path,
                     params={'allowDuplicated': 'true'},
-                    files={'file': open(attachment_path, 'rb')})
+                    files={'minorEdit': self.minoredit, 'file': open(attachment_path, 'rb')})
         log.info('Uploaded {} to post ID {}'.format(attachment_path, post_id))
 
     def get_author(self, username):
@@ -424,7 +427,7 @@ class Confluence():
         # Increment the version number, as required by the Confluence API
         # https://docs.atlassian.com/ConfluenceServer/rest/7.1.0/#api/content-update
         new_version = page['version']['number'] + 1
-        new_page['version'] = {'number': new_version}
+        new_page['version'] = {'minorEdit': self.minoredit, 'number': new_version}
 
         # With the attachments uploaded, and our new page structure created,
         # we can upload the final content up to Confluence.
