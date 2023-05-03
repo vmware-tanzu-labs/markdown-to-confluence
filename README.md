@@ -33,11 +33,15 @@ docker run -it -v ~/hugo-site:/site markdown-to-confluence:v1.0 --api_url "CONFL
 # Usage
 
 ```
-usage: markdown-to-confluence.py [-h] [--api_url API_URL] [--space SPACE] [--username USERNAME] [--password PASSWORD]
-      
-      [--dir DIR] [--git GIT] [--global_label GLOBAL_LABEL] [--header HEADER]
-      [--dry-run] [--force] [--save-cookie SAVE_COOKIE] [--cookie-file COOKIE]
-      [posts ...]
+usage: markdown-to-confluence.py [-h] [--api_url API_URL] [--space SPACE]
+                                 [--username USERNAME] [--password PASSWORD]
+                                 [--dir DIR] [--git GIT]
+                                 [--global_label GLOBAL_LABEL]
+                                 [--header HEADER] [--dry-run] [--force]
+                                 [--no-minoredit] [--no-optimizeattachments]
+                                 [--save-cookie SAVE_COOKIE]
+                                 [--cookie-file COOKIE]
+                                 [posts [posts ...]]
 
 Converts and deploys a single or directory of markdown page/s to Confluence
 
@@ -57,10 +61,12 @@ optional arguments:
   --header HEADER       Extra header to include in the request when sending HTTP to a server. May be specified multiple times. (default: env('CONFLUENCE_HEADER_<NAME>'))
   --dry-run             Print requests that would be sent - don't actually make requests against Confluence (note: we return empty responses, so this might impact accuracy)
   --force               Can be used with --git flag. Upload pages without checking for changes
+  --no-minoredit        Don't use minorEdit flag when creating content and trigger notifications for all changes
+  --no-optimizeattachments
+                        Upload all attachments everytime
   --save-cookie SAVE_COOKIE
                         File system location to write cookie
   --cookie-file COOKIE  Instead of using a user name and password use a cookie created with --save-cookie
-
 ```
 
 ## What Posts are Deployed?
