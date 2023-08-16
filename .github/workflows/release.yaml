@@ -1,0 +1,40 @@
+name: Release
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Release
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+      # workaround as there is no way to get the Release name or just the tag name by itself
+      - name: Extract branch name
+        shell: bash
+        run: echo "##[set-output name=tag;]$(echo ${GITHUB_REF#refs/tags/})"
+        id: extract_tag
+      - name: Build Lab Image
+        env:
+          VERSION: ${{ steps.extract_tag.outputs.tag }}
+        run: |
+          make build version=$VERSION
+      - name: Prune dangling images
+        run: docker image prune -f
+      - name: Login to GitHub Package Registry
+        uses: docker/login-action@v1
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish version to GitHub Package Registry
+        env:
+          VERSION: ${{ steps.extract_tag.outputs.tag }}
+        run: |
+          make release version=$VERSION
+      - name: Upload Release Assets
+        uses: AButler/upload-release-assets@v2.0
+        with:
+          files: './build/*'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
