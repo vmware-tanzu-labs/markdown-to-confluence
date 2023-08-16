@@ -148,6 +148,18 @@ def parse_args():
         help='Can be used with --git flag. Upload pages without checking for changes'
     )
     parser.add_argument(
+        '--no-minoredit',
+        dest='minoredit',
+        action='store_false',
+        help='Don\'t use minorEdit flag when creating content and trigger notifications for all changes'
+    )
+    parser.add_argument(
+        '--no-optimizeattachments',
+        dest='optimizeattachments',
+        action='store_false',
+        help='Upload all attachments everytime'
+    )
+    parser.add_argument(
         '--save-cookie',
         dest='save_cookie',
         default=None,
@@ -312,7 +324,9 @@ def main():
                             password=args.password,
                             cookie=args.cookie,
                             headers=args.headers,
-                            dry_run=args.dry_run)
+                            dry_run=args.dry_run,
+                            optimizeattachments=args.optimizeattachments,
+                            minoredit=args.minoredit)
 
     if args.save_cookie:
         log.info('Attempting to save cookie.  Input files will be ignored')
