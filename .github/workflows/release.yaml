@@ -15,7 +15,7 @@ jobs:
         shell: bash
         run: echo "##[set-output name=tag;]$(echo ${GITHUB_REF#refs/tags/})"
         id: extract_tag
-      - name: Build Lab Image
+      - name: Build Image
         env:
           VERSION: ${{ steps.extract_tag.outputs.tag }}
         run: |
